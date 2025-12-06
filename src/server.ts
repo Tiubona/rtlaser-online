@@ -1,4 +1,4 @@
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 
@@ -8,6 +8,20 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// ==== LOG GLOBAL DE TODAS AS REQUISIÇÕES ====
+app.use((req: Request, res: Response, next: NextFunction) => {
+  console.log("🌐 Requisição recebida:", {
+    method: req.method,
+    url: req.originalUrl,
+    query: req.query,
+    headers: {
+      "user-agent": req.headers["user-agent"],
+      "x-forwarded-for": req.headers["x-forwarded-for"],
+    },
+  });
+  next();
+});
 
 const PORT = Number(process.env.PORT) || 3002;
 
