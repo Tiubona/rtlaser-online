@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import nodemailer from "nodemailer";
 
 dotenv.config();
 
@@ -48,6 +49,32 @@ const afterHoursConfig: AfterHoursConfig = {
 
 let emergencyEmails: EmergencyEmail[] = [];
 
+// ===== Config de e-mail (Nodemailer) =====
+
+const smtpHost = process.env.SMTP_HOST;
+const smtpPort = process.env.SMTP_PORT
+  ? Number(process.env.SMTP_PORT)
+  : 587;
+const smtpUser = process.env.SMTP_USER;
+const smtpPass = process.env.SMTP_PASS;
+const emailFrom =
+  process.env.EMERGENCY_EMAIL_FROM || "no-reply@rtlaser.com";
+
+const canSendEmail =
+  !!smtpHost && !!smtpPort && !!smtpUser && !!smtpPass;
+
+const transporter = canSendEmail
+  ? nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465, // 465 = SSL, outros = STARTTLS
+      auth: {
+        user: smtpUser,
+        pass: smtpPass,
+      },
+    })
+  : null;
+
 // ===== Rotas AFTER HOURS =====
 
 app.get("/admin/after-hours/health", (req: Request, res: Response) => {
@@ -78,7 +105,7 @@ app.get("/admin/after-hours/config", (req: Request, res: Response) => {
       instanceId: process.env.CHATGURU_INSTANCE_ID || "",
     },
     email: {
-      from: process.env.EMERGENCY_EMAIL_FROM || null,
+      from: emailFrom,
       to: emergencyEmails
         .filter((e) => e.active)
         .map((e) => e.email),
@@ -174,24 +201,74 @@ app.delete("/admin/emergency/emails/:id", (req: Request, res: Response) => {
   });
 });
 
-// ===== Alerta de teste (simulado) =====
+// ===== Alerta de emergência (agora REAL, com e-mail) =====
 
-app.post("/admin/emergency/alert", (req: Request, res: Response) => {
+app.post("/admin/emergency/alert", async (req: Request, res: Response) => {
   const { subject, message } = req.body || {};
 
-  console.log("✅ Alerta de emergência recebido (simulação):", {
+  const activeEmails = emergencyEmails
+    .filter((e) => e.active)
+    .map((e) => e.email);
+
+  if (!subject || !message) {
+    return res.status(400).json({
+      success: false,
+      message: "Campos 'subject' e 'message' são obrigatórios.",
+    });
+  }
+
+  if (!activeEmails.length) {
+    return res.status(400).json({
+      success: false,
+      message: "Nenhum e-mail de emergência ativo cadastrado.",
+    });
+  }
+
+  console.log("🚨 Requisição de alerta de emergência recebida:", {
     subject,
     message,
+    activeEmails,
   });
 
-  return res.json({
-    success: true,
-    message:
-      "Alerta recebido pelo backend (simulado). Integração de e-mail real ainda não configurada.",
-  });
+  if (!canSendEmail || !transporter) {
+    console.warn(
+      "⚠️ SMTP não configurado corretamente. Alerta não será enviado por e-mail."
+    );
+    return res.json({
+      success: false,
+      emailSent: false,
+      message:
+        "SMTP não configurado. Alerta recebido, mas e-mail não foi disparado.",
+    });
+  }
+
+  try {
+    await transporter.sendMail({
+      from: emailFrom,
+      to: activeEmails.join(","),
+      subject,
+      text: message,
+      html: `<p>${message}</p>`,
+    });
+
+    console.log("✅ Alerta de emergência enviado por e-mail com sucesso.");
+
+    return res.json({
+      success: true,
+      emailSent: true,
+      message: "Alerta de emergência enviado por e-mail.",
+    });
+  } catch (error) {
+    console.error("❌ Erro ao enviar e-mail de emergência:", error);
+    return res.status(500).json({
+      success: false,
+      emailSent: false,
+      message: "Falha ao enviar e-mail de emergência.",
+    });
+  }
 });
 
-// ===== Webhook raiz (simulador) =====
+// ===== Webhook raiz (ainda simulado) =====
 
 app.post("/", (req: Request, res: Response) => {
   const body = req.body || {};
